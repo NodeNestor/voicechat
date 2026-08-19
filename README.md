@@ -18,7 +18,7 @@ Four small services. Three hold models, one is the glue and the browser UI.
 | service | what it is | port |
 |---|---|---|
 | `ear` | Gemma 4 E4B via llama.cpp — hears your audio *directly*, no separate ASR step | 8781 |
-| `mouth` | CSM-1B via [csm.rs](https://github.com/CoreyCole/csm.rs) — speaks, taking text incrementally | 8770 |
+| `mouth` | CSM-1B via `csm.rs` — speaks, taking text incrementally | 8770 |
 | `stt` | faster-whisper — a transcript for grounding and history | 8790 |
 | `web` | the glue plus the browser UI (stdlib Python, no framework) | 8800 |
 
@@ -83,11 +83,12 @@ Licensing.
 
 ## Setup
 
-csm.rs is a separate AGPL project; clone and build it yourself rather than
-vendoring it:
+`csm.rs` is a separate AGPL-3.0 project (a Rust/candle implementation of
+Sesame's CSM). Clone and build it yourself rather than vendoring it — that keeps
+its license off this repository:
 
 ```bash
-git clone https://github.com/CoreyCole/csm.rs
+git clone <csm.rs repository>
 cd csm.rs && CUDA_COMPUTE_CAP=86 cargo build --release --features cuda --bin server
 ```
 
