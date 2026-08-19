@@ -22,13 +22,96 @@ Four small services. Three hold models, one is the glue and the browser UI.
 | `stt` | faster-whisper — a transcript for grounding and history | 8790 |
 | `web` | the glue plus the browser UI (stdlib Python, no framework) | 8800 |
 
-The ear takes your recorded audio as input rather than a transcript, which is
-why it handles mumbling and half-words better than a pipeline that transcribes
-first and reasons second. The transcript is still produced alongside, because
-having the words is useful for history and grounding.
+## How a turn works, end to end
 
-Text streams into the mouth clause by clause while the ear is still writing, so
-speech starts before the reply is finished.
+1. **The browser listens.** Mic audio is captured continuously and gated
+   locally: it watches RMS against a threshold you can drag, and calls the end
+   of your turn after a hang time of silence. Nothing is sent while you are
+   still talking.
+
+2. **It posts the clip.** On end-of-speech the page encodes a wav and `POST`s it
+   to `/turn`. Everything after this streams back over one SSE connection, so
+   the browser gets transcript, text, and audio on the same channel.
+
+3. **Whisper transcribes it — off the critical path.** This runs first and costs
+   around 160 ms on a second GPU, which is roughly the silence the browser has
+   already waited out, so it is close to free. Its output is *not* the input to
+   the reply; it is there for display, for conversation history, and as a
+   textual hint alongside the audio. If this service is down the assistant still
+   works.
+
+4. **The ear hears the audio itself.** The wav goes to Gemma 4 base64-encoded,
+   as audio, together with the system prompt, a one-line time-and-place note,
+   and the conversation history. Gemma is natively multimodal over audio, so
+   there is no transcribe-then-reason step: it hears tone, hesitation, and
+   half-finished words directly, and the transcript rides along as a hint rather
+   than as the whole truth.
+
+5. **The reply streams out token by token,** and each fragment does two things
+   at once: it is published to the browser as a `delta` so the text appears as
+   it is written, and it is pushed onto a queue feeding the voice.
+
+6. **The mouth speaks while the ear is still writing.** A single chunked HTTP
+   connection to `csm.rs` stays open for the whole reply, and text fragments are
+   fed into it as they arrive. CSM continues *one* generation rather than
+   starting a new one per sentence, so its KV cache is never cleared mid-reply.
+
+7. **Audio comes back as it is produced** and is republished over SSE as base64
+   PCM. The browser queues and plays chunks as they land. By the time the ear
+   finishes its last word, most of the reply has already been spoken.
+
+## Why it feels fast
+
+It is worth being precise, because the honest throughput number below is *not*
+fast: CSM generates at roughly 0.9x realtime. The system feels responsive
+anyway, because the architecture hides latency rather than removing it.
+
+**Nothing waits for the previous stage to finish.** The naive pipeline is
+serial — transcribe, then think, then synthesize, then play — and its latency is
+the sum of four stages. Here, transcription overlaps the silence you were
+already leaving, and synthesis overlaps generation. Time to first audio is
+roughly "ear's first few words" plus "CSM's first frame", not the sum of
+everything.
+
+**Skipping the ASR bottleneck in the reasoning path.** Because Gemma takes audio
+directly, the reply does not wait on a transcript, and quality does not collapse
+when the transcript is wrong. A mis-heard word in an ASR-first pipeline is
+unrecoverable — the model never sees the audio. Here it is only a bad hint.
+
+**One connection to the voice, not one per sentence.** An earlier version issued
+a fresh request per clause. It was slower, because every request paid model
+setup again, and it *sounded* worse: restarting generation reset prosody and put
+an audible wall at every join. Streaming into a single generation removes both.
+
+**A prompt prefix that stays stable.** History is appended, never windowed. A
+sliding window drops messages off the front each turn, which changes the prefix
+and throws away the KV cache behind it — measured at 71% more prefill over 12
+turns, and getting worse. Appending keeps each turn's prefill roughly flat no
+matter how long you talk.
+
+**Speech starts on a phrase, not a sentence.** When no punctuation has arrived
+yet, four words are enough to start speaking — long enough for the model to
+shape a phrase, short enough that you are not waiting on a full clause.
+
+## Is this how Sesame does it?
+
+Honestly: this is a guess, and it should be read as one. Their demo is not open,
+and none of this is based on inside knowledge.
+
+But the shape falls out of the constraints. If you want a voice assistant that
+responds in conversational time, you need generation and synthesis to overlap,
+you need the speech model to continue one generation rather than restart, and
+you gain a lot by letting the reasoning model hear audio instead of reading a
+transcript. Those are not clever tricks so much as the small number of things
+that work.
+
+Where the real thing is presumably far ahead is everything this project does
+not do: substantial fine-tuning of both models for conversational speech,
+end-to-end training rather than three separate models bolted together with HTTP,
+a speech model trained for interruption and backchannelling, and prosody that
+carries across turns instead of resetting. This repository is the plumbing, run
+locally, with off-the-shelf weights. The gap between it and a well-tuned system
+is mostly training, not architecture.
 
 ## The voice is the whole thing
 
