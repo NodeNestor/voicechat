@@ -99,10 +99,10 @@ Then start the four services, each in its own terminal:
 
 ```bash
 # 1. ear - Gemma 4 E4B, hears audio directly
-llama-server -m gemma-4-E4B-it-Q8_0.gguf --mmproj mmproj-gemma-4-E4B-it-BF16.gguf              --host 127.0.0.1 --port 8781 -ngl 99 -np 1
+llama-server -m gemma-4-E4B-it-Q8_0.gguf \n             --mmproj mmproj-gemma-4-E4B-it-BF16.gguf \n             --host 127.0.0.1 --port 8781 -ngl 99 -np 1
 
 # 2. mouth - CSM, with your cloned voice
-./csm.rs/target/release/server --weights-path csm-1b/model.safetensors     --host 127.0.0.1 --port 8770 --buffer-size 1     --ref-audio voices_custom/alice.wav --ref-text "$(cat voices_custom/alice.txt)"
+./csm.rs/target/release/server \n    --weights-path csm-1b/model.safetensors \n    --host 127.0.0.1 --port 8770 --buffer-size 1 \n    --ref-audio voices_custom/alice.wav \n    --ref-text "$(cat voices_custom/alice.txt)"
 
 # 3. stt - transcripts for history and display
 python stt_server.py
