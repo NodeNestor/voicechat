@@ -18,7 +18,7 @@ Four small services. Three hold models, one is the glue and the browser UI.
 | service | what it is | port |
 |---|---|---|
 | `ear` | Gemma 4 E4B via llama.cpp — hears your audio *directly*, no separate ASR step | 8781 |
-| `mouth` | CSM-1B via `csm.rs` — speaks, taking text incrementally | 8770 |
+| `mouth` | CSM-1B via [csm.rs](https://github.com/cartesia-one/csm.rs) — speaks, taking text incrementally | 8770 |
 | `stt` | faster-whisper — a transcript for grounding and history | 8790 |
 | `web` | the glue plus the browser UI (stdlib Python, no framework) | 8800 |
 
@@ -157,7 +157,13 @@ Only clone voices you have the right to clone.
 
 ## Requirements
 
-- NVIDIA GPU. Comfortable on 16 GB; the ear is ~7 GB and the mouth ~3.5 GB.
+- **An NVIDIA GPU faster than an RTX 5060 Ti.** Capacity is not the problem —
+  16 GB is plenty, the ear is ~7 GB and the mouth ~3.5 GB. Speed is the problem.
+  See [Performance](#performance-honestly): on a 5060 Ti the voice sits right on
+  the edge of realtime and the experience is inconsistent. A 4080/4090-class
+  card or better is what you want.
+- A second GPU is nice but optional — it lets Whisper run without competing with
+  the ear. Anything with a couple of GB works.
 - CUDA 12.x for building csm.rs (`cudarc` does not accept 13.x).
 - Python 3.11+, and Rust for csm.rs.
 
@@ -171,7 +177,7 @@ Sesame's CSM). Clone and build it yourself rather than vendoring it — that kee
 its license off this repository:
 
 ```bash
-git clone <csm.rs repository>
+git clone https://github.com/cartesia-one/csm.rs
 cd csm.rs && CUDA_COMPUTE_CAP=86 cargo build --release --features cuda --bin server
 ```
 
@@ -219,17 +225,30 @@ them.
 
 ## Performance, honestly
 
-On an RTX 5060 Ti the mouth generates at roughly **0.9× realtime** — very
-slightly slower than playback. Short replies are fine; long ones can drain the
-buffer.
+**An RTX 5060 Ti is not fast enough, and the reason is worth understanding.**
 
-That number is not GPU-bound, and this is the interesting part. Measured on an
-A100 80GB, it is *the same* — because generation is one strictly sequential
+The mouth generates at roughly **0.9-1.0x realtime** on that card. That sounds
+like a near miss, and it is exactly the wrong place to be: it means the voice
+sits right on the boundary. When a reply happens to generate above 1x it is
+genuinely great - speech arrives faster than it plays, the buffer stays ahead,
+and it feels like talking to someone. When it dips below, playback catches up
+with generation and the audio goes choppy mid-sentence.
+
+So the experience is not "a bit slow", it is *inconsistent* - lovely one moment
+and broken the next, which is more annoying than being uniformly slow. What you
+want is headroom, not parity: comfortably above 1x so that normal variation
+never drops you under it. That means a faster GPU than mine.
+
+Frustratingly, throwing a much bigger GPU at it does not help either, and this
+is the interesting part. Measured on an A100 80GB, it is *the same* — because generation is one strictly sequential
 chain of small operations (a backbone pass plus one decoder pass per codebook,
 32 of them, per 80 ms frame), and the cost is per-operation dispatch rather than
 arithmetic. Memory bandwidth utilisation sits at ~6%. A bigger GPU does not
-help; the fix would be CUDA graph capture, which candle does not currently
-support (stream capture fails on its allocation path).
+help - it is *clock speed and dispatch overhead* that matter here, not width or
+bandwidth, and an A100 clocks lower than a desktop card. The real fix would be
+CUDA graph capture, which candle does not currently support (stream capture
+fails on its allocation path). Until then, prefer a fast consumer card with a
+high clock over a big datacentre one.
 
 So: this is what the architecture costs today. It is good enough to hold a
 conversation, and the system prompt keeps replies short partly for this reason.
