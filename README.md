@@ -95,9 +95,43 @@ Set `CUDA_COMPUTE_CAP` for your card: 80 for A100, 86 for Ampere consumer,
 89 for Ada (4090/4060), 120 for Blackwell (50-series). A binary built for one
 will not run on another.
 
-Then fetch the models, start the four services, and open
-<http://127.0.0.1:8800>. See [`deploy/`](deploy/) for scripts that bring the
-whole stack up, including running it on a remote GPU box over an SSH tunnel.
+Then start the four services, each in its own terminal:
+
+```bash
+# 1. ear - Gemma 4 E4B, hears audio directly
+llama-server -m gemma-4-E4B-it-Q8_0.gguf --mmproj mmproj-gemma-4-E4B-it-BF16.gguf              --host 127.0.0.1 --port 8781 -ngl 99 -np 1
+
+# 2. mouth - CSM, with your cloned voice
+./csm.rs/target/release/server --weights-path csm-1b/model.safetensors     --host 127.0.0.1 --port 8770 --buffer-size 1     --ref-audio voices_custom/alice.wav --ref-text "$(cat voices_custom/alice.txt)"
+
+# 3. stt - transcripts for history and display
+python stt_server.py
+
+# 4. web - the glue and the UI
+python live_server.py
+```
+
+Open <http://127.0.0.1:8800> and click **Listen**.
+
+A note on the mouth: the reference audio and its transcript are passed at
+startup and fixed for the life of the process, so restarting it is how you
+change voice. Pass the transcript from the `.txt` that `add_voice.py` wrote
+next to the wav rather than typing one - a mismatched transcript is the most
+common cause of a clone sounding worse than it should.
+
+Useful environment variables:
+
+| var | default | what |
+|---|---|---|
+| `VC_PORT` | 8800 | web UI port |
+| `VC_EAR` / `VC_MOUTH` / `VC_STT_URL` | localhost | point at remote services |
+| `VC_BUF` | 1 | frames decoded per chunk; 1 is smoothest |
+| `VC_SPEAK_WORDS` | 4 | words buffered before speech starts |
+| `VC_LATLON` / `VC_PLACE` | unset | enables a time-and-weather line; unset = off |
+
+The services bind to loopback. To run them on a remote GPU box, forward the
+ports over SSH (`ssh -N -L 8770:127.0.0.1:8770 you@box`) rather than exposing
+them.
 
 ## Performance, honestly
 

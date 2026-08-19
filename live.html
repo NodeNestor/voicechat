@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>voice chat</title>
+<style>
+  :root{--bg:#0d1014;--panel:#161b22;--line:#252c38;--fg:#e6edf3;--dim:#8b949e;
+        --accent:#4dd4ac;--accent2:#58a6ff;--warn:#e3b341;--err:#f85149;
+        --mono:ui-monospace,"Cascadia Code",Consolas,monospace}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);height:100vh;display:flex;
+       flex-direction:column;font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif}
+  header{padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);
+         display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  h1{font-size:15px;margin:0;font-weight:600}
+  .badge{font:11px/1 var(--mono);padding:4px 8px;border-radius:10px;background:#1c2230;
+         color:var(--dim);border:1px solid var(--line)}
+  .badge.on{color:var(--accent);border-color:#2b6d5c}
+  .badge.hot{color:var(--err);border-color:#6d2b2b}
+  main{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);min-height:0}
+  section{background:var(--bg);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .head{padding:8px 14px;font:11px/1 var(--mono);text-transform:uppercase;letter-spacing:.8px;
+        color:var(--dim);border-bottom:1px solid var(--line);background:var(--panel);
+        display:flex;justify-content:space-between}
+  .body{flex:1;overflow-y:auto;padding:14px;min-height:0}
+  .talk{width:100%;padding:22px;font-size:16px;font-weight:600;cursor:pointer;border-radius:10px;
+        background:#1c2230;color:var(--fg);border:2px solid var(--line);transition:all .12s}
+  .talk.live{background:#12241f;border-color:var(--accent);color:var(--accent)}
+  .talk.hot{background:#3d1a1a;border-color:var(--err);color:#ffb3b3}
+  .meter{height:6px;background:#1c2230;border-radius:3px;margin:10px 0;overflow:hidden;position:relative}
+  #level{height:100%;width:0;background:var(--accent);transition:width .05s}
+  #gate{position:absolute;top:0;height:100%;width:2px;background:var(--warn)}
+  label{display:block;font:11px/1 var(--mono);text-transform:uppercase;letter-spacing:.6px;
+        color:var(--dim);margin:16px 0 6px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin-top:6px}
+  .stat{background:#1c2230;border:1px solid var(--line);border-radius:6px;padding:8px 10px}
+  .stat b{display:block;font:17px/1.2 var(--mono);color:var(--accent)}
+  .stat span{font:10px/1 var(--mono);color:var(--dim);text-transform:uppercase}
+  .msg{padding:9px 12px;border-radius:8px;margin-bottom:8px;font-size:13px}
+  .msg.you{background:#1c2230;border-left:3px solid var(--accent2)}
+  .msg.bot{background:#12241f;border-left:3px solid var(--accent)}
+  .msg .who{font:10px/1 var(--mono);text-transform:uppercase;color:var(--dim);margin-bottom:5px}
+  #log{font:11.5px/1.6 var(--mono)}
+  .ev{padding:2px 0;display:flex;gap:9px;border-bottom:1px solid #1b212b}
+  .ev .t{color:#57606a;flex-shrink:0}
+  .ev .k{flex-shrink:0;min-width:110px}
+  .k-first_token,.k-first_audio{color:var(--accent)}
+  .k-turn_start{color:var(--accent2)}
+  .k-delta{color:#7ee787}
+  .k-interrupted,.k-warning{color:var(--warn)}
+  .k-error{color:var(--err)}
+  .k-audio{color:#57606a}
+  button.act{padding:7px 13px;background:#1c2230;color:var(--fg);border:1px solid var(--line);
+             border-radius:6px;font-size:12px;cursor:pointer;margin-right:6px}
+  .status{font:11px/1 var(--mono);color:var(--dim);padding:6px 14px;border-top:1px solid var(--line);
+          background:var(--panel)}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>voice chat</h1>
+  <span class="badge" id="b-conn">connecting</span>
+  <span class="badge" id="b-state">idle</span>
+  <span class="badge" id="b-turns">turns 0</span>
+</header>
+
+<main>
+  <section>
+    <div class="head"><span>Talk</span><span id="mode">open mic</span></div>
+    <div class="body">
+      <button class="talk" id="talk">Click to start listening</button>
+      <div class="meter"><div id="level"></div><div id="gate"></div></div>
+
+      <label>Voice gate <span style="text-transform:none">— <b id="thr-val">0.020</b></span></label>
+      <input type="range" id="thr" min="2" max="120" step="1" value="20">
+      <label>Silence before it answers <span style="text-transform:none">— <b id="hang-val">700</b> ms</span></label>
+      <input type="range" id="hang" min="200" max="1500" step="50" value="700">
+      <label>Voice buffer <span style="text-transform:none">— <b id="buf-val">8</b> frames, <b id="buf-ms">640</b> ms per chunk</span></label>
+      <input type="range" id="buf" min="1" max="16" step="1" value="8">
+      <label>Camera</label>
+      <button id="cam" style="width:100%;margin-bottom:6px">Turn camera on</button>
+      <div id="campane" style="display:none;margin-bottom:8px">
+        <div style="display:flex;gap:8px">
+          <div style="flex:1;position:relative">
+            <video id="vid" autoplay playsinline muted
+                   style="width:100%;border-radius:6px;display:block;background:#000"></video>
+            <div id="camlive" style="position:absolute;top:4px;left:6px;font-size:10px;
+                 letter-spacing:.08em;text-transform:uppercase;color:#fff;
+                 text-shadow:0 1px 3px #000">live</div>
+            <div id="cambar" style="position:absolute;left:0;bottom:0;height:3px;width:0%;
+                 background:var(--accent2);transition:width .25s"></div>
+          </div>
+          <div style="flex:1;position:relative">
+            <img id="lastframe" alt="" style="width:100%;border-radius:6px;display:block;
+                 background:#000;min-height:40px">
+            <div style="position:absolute;top:4px;left:6px;font-size:10px;
+                 letter-spacing:.08em;text-transform:uppercase;color:#fff;
+                 text-shadow:0 1px 3px #000">last sent</div>
+          </div>
+        </div>
+        <div id="camwhat" style="font-size:11px;opacity:.75;margin-top:5px;min-height:14px"></div>
+      </div>
+      <canvas id="cvs" style="display:none"></canvas>
+      <label>Camera sensitivity <span style="text-transform:none">— sends when <b id="sens-val">12</b>% of the frame changes</span></label>
+      <input type="range" id="sens" min="2" max="50" step="1" value="12">
+
+      <label>Audio head start <span style="text-transform:none">— <b id="pre-val">400</b> ms held before playing</span></label>
+      <input type="range" id="pre" min="0" max="1200" step="50" value="400">
+
+      <label>Latency</label>
+      <div class="stats">
+        <div class="stat"><b id="s-tok">—</b><span>1st token ms</span></div>
+        <div class="stat"><b id="s-aud">—</b><span>1st audio ms</span></div>
+        <div class="stat"><b id="s-turn">—</b><span>turn ms</span></div>
+      </div>
+
+      <label>Conversation</label>
+      <div id="chat"></div>
+      <div style="margin-top:10px">
+        <button class="act" id="reset">Reset</button>
+        <button class="act" id="clear">Clear log</button>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="head"><span>Events</span></div>
+    <div class="body" id="log"></div>
+    <div class="status" id="status">idle</div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const SR = 16000;
+
+// ---------------------------------------------------------------- log
+function logEv(kind, detail){
+  const el=$('log'), bottom = el.scrollHeight-el.scrollTop-el.clientHeight < 60;
+  const d=document.createElement('div');
+  d.className='ev k-'+kind;
+  d.innerHTML=`<span class="t">${new Date().toTimeString().slice(0,8)}</span><span class="k">${kind}</span><span class="d"></span>`;
+  d.lastChild.textContent = detail||'';
+  el.appendChild(d);
+  while(el.children.length>800) el.removeChild(el.firstChild);
+  if(bottom) el.scrollTop=el.scrollHeight;
+}
+function addMsg(who,text){
+  const d=document.createElement('div');
+  d.className='msg '+(who==='you'?'you':'bot');
+  d.innerHTML=`<div class="who">${who}</div><div class="txt"></div>`;
+  d.lastChild.textContent=text;
+  $('chat').appendChild(d);
+  $('chat').scrollTop=$('chat').scrollHeight;
+  return d.lastChild;
+}
+
+// ---------------------------------------------------------------- playback
+// Audio arrives as raw PCM chunks while the model is still generating, so each
+// one is scheduled at the end of the previous. nextPlay is that running clock;
+// keeping it means the voice is gapless instead of a sequence of separate plays.
+let outCtx=null, nextPlay=0, queued=[], speaking=false;
+
+// Generation runs at only ~1.0x realtime, so chunks arrive with almost no
+// headroom: measured, each carries 160 ms of audio but the worst wait between
+// them is 453 ms. Playing a chunk the moment it lands therefore guarantees a
+// hole mid-word. Hold PREROLL of audio back before starting, so playback is
+// always running behind what has already arrived and jitter is absorbed.
+let PREROLL=0.40;
+let pre=[], preDur=0, started=false, faded=false;
+
+function agentSpeaking(){
+  return outCtx && (nextPlay > outCtx.currentTime + 0.05 || pre.length>0);
+}
+
+function decodePCM(b64, rate){
+  const bin=atob(b64), n=bin.length>>1;
+  if(n<=0) return null;
+  const buf=outCtx.createBuffer(1,n,rate||24000), ch=buf.getChannelData(0);
+  for(let i=0;i<n;i++){
+    const lo=bin.charCodeAt(i*2), hi=bin.charCodeAt(i*2+1);
+    let v=(hi<<8)|lo; if(v>=0x8000) v-=0x10000;
+    ch[i]=v/32768;
+  }
+  return buf;
+}
+
+// Everything goes through one gain node so the voice can be faded rather than
+// switched. Starting or stopping playback on a non-zero sample is a step in the
+// waveform, and a step is a click - which is what the hard edges at the start,
+// the end and on every barge-in actually were.
+const FADE_IN=0.012, FADE_OUT=0.035, FADE_CUT=0.045;
+let outGain=null;
+
+function gain(){
+  if(!outGain){ outGain=outCtx.createGain(); outGain.connect(outCtx.destination); }
+  return outGain;
+}
+
+function schedule(buf){
+  const src=outCtx.createBufferSource();
+  src.buffer=buf; src.connect(gain());
+  const now=outCtx.currentTime;
+  if(nextPlay < now+0.02) nextPlay = now+0.02;   // underrun: only after preroll
+  if(!faded){                                    // first audio of the turn
+    faded=true;
+    const g=gain().gain;
+    g.cancelScheduledValues(nextPlay);
+    g.setValueAtTime(0, nextPlay);
+    g.linearRampToValueAtTime(1, nextPlay+FADE_IN);
+  }
+  src.start(nextPlay); nextPlay += buf.duration;
+  queued.push(src);
+  src.onended=()=>{ const i=queued.indexOf(src); if(i>=0) queued.splice(i,1); };
+}
+
+// Called once the last chunk of a turn is scheduled, so the tail rolls off into
+// silence instead of stopping dead on whatever sample it happened to reach.
+function fadeOutTail(){
+  if(!outCtx || !faded || nextPlay<=outCtx.currentTime) return;
+  const g=gain().gain, end=nextPlay;
+  g.cancelScheduledValues(Math.max(outCtx.currentTime, end-FADE_OUT));
+  g.setValueAtTime(1, Math.max(outCtx.currentTime, end-FADE_OUT));
+  g.linearRampToValueAtTime(0, end);
+}
+
+function playPCM(b64, rate){
+  if(!outCtx) outCtx=new (window.AudioContext||window.webkitAudioContext)();
+  if(outCtx.state==='suspended') outCtx.resume();
+  const buf=decodePCM(b64, rate);
+  if(!buf) return;
+  setState('speaking');
+  if(started){ schedule(buf); return; }
+  pre.push(buf); preDur+=buf.duration;
+  if(preDur>=PREROLL) flushPre();
+}
+
+// A reply shorter than PREROLL would otherwise sit in the buffer forever, so
+// the end of a turn releases whatever is held.
+function flushPre(){
+  if(!pre.length) return;
+  started=true; nextPlay=0;
+  for(const b of pre) schedule(b);
+  pre=[]; preDur=0;
+}
+
+function resetPlayback(){ pre=[]; preDur=0; started=false; faded=false; }
+
+function stopPlayback(why){
+  if(!queued.length && !pre.length) return;
+  const now=outCtx?outCtx.currentTime:0;
+  if(outCtx && faded){                     // ramp down, then cut
+    const g=gain().gain;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(g.value, now);
+    g.linearRampToValueAtTime(0, now+FADE_CUT);
+  }
+  const dying=queued.slice();
+  setTimeout(()=>{ for(const s of dying){ try{s.stop();}catch(e){} } }, FADE_CUT*1000+10);
+  queued=[]; resetPlayback();
+  nextPlay = now;
+  logEv('interrupted', why);
+}
+
+// ---------------------------------------------------------------- camera
+// Sending every frame would be pointless and slow: describing one costs the ear
+// about 450 ms. So compare a tiny greyscale version of each frame against the
+// last one actually sent, and only send when the scene has really moved. The
+// send is fire and forget - the description lands whenever it lands, and rides
+// along with the next turn rather than blocking it.
+let camOn=false, camStream=null, camTimer=null, lastThumb=null, lastSent=0;
+const THUMB=32, COOLDOWN=4000;
+
+function sens(){ return parseInt($('sens').value,10)/100; }
+
+function thumbOf(video){
+  const c=$('cvs'); c.width=THUMB; c.height=THUMB;
+  const g=c.getContext('2d', {willReadFrequently:true});
+  g.drawImage(video,0,0,THUMB,THUMB);
+  const d=g.getImageData(0,0,THUMB,THUMB).data;
+  const out=new Float32Array(THUMB*THUMB);
+  for(let i=0;i<out.length;i++){
+    out[i]=(d[i*4]*0.299 + d[i*4+1]*0.587 + d[i*4+2]*0.114)/255;
+  }
+  return out;
+}
+
+function changed(a,b){
+  if(!a||!b) return 1;
+  let sum=0;
+  for(let i=0;i<a.length;i++) sum+=Math.abs(a[i]-b[i]);
+  return sum/a.length;
+}
+
+function sendFrame(){
+  const v=$('vid'), c=$('cvs');
+  const w=448, h=Math.round(448*(v.videoHeight||480)/(v.videoWidth||640));
+  c.width=w; c.height=h;
+  c.getContext('2d').drawImage(v,0,0,w,h);
+  c.toBlob(b=>{
+    if(!b) return;
+    fetch('/vision',{method:'POST',headers:{'Content-Type':'image/jpeg'},body:b});
+    const url=URL.createObjectURL(b);
+    const img=$('lastframe');
+    if(img.dataset.url) URL.revokeObjectURL(img.dataset.url);
+    img.src=url; img.dataset.url=url;
+    $('camwhat').textContent='looking...';
+    logEv('camera','frame sent, '+Math.round(b.size/1024)+' KB');
+  },'image/jpeg',0.7);
+}
+
+function camTick(){
+  const v=$('vid');
+  if(!camOn || !v.videoWidth) return;
+  const t=thumbOf(v);
+  const diff=changed(t,lastThumb);
+  $('cambar').style.width=Math.min(100, diff/sens()*100)+'%';   // progress to trigger
+  const now=performance.now();
+  if(diff>sens() && now-lastSent>COOLDOWN){
+    lastSent=now; lastThumb=t;
+    sendFrame();
+  } else if(!lastThumb){
+    lastThumb=t;
+  }
+}
+
+async function toggleCam(){
+  if(camOn){
+    camOn=false; clearInterval(camTimer); camTimer=null;
+    if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; }
+    $('vid').srcObject=null; lastThumb=null;
+    $('campane').style.display='none';
+    $('cam').textContent='Turn camera on';
+    logEv('camera','off');
+    return;
+  }
+  try{
+    camStream=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480}});
+    $('vid').srcObject=camStream;
+    camOn=true;
+    $('campane').style.display='block';
+    $('cam').textContent='Turn camera off';
+    logEv('camera','on - watching for changes');
+    lastSent=0; lastThumb=null;
+    camTimer=setInterval(camTick,1000);
+  }catch(e){ logEv('camera','denied: '+e.message); }
+}
+
+// ---------------------------------------------------------------- mic + gate
+let ctx,node,src,stream, listening=false, buf=[], speechFrames=0, quietMs=0, capturing=false;
+let youLine=null;
+const BARGE_MULT=3;
+let bargeUntil=0;
+
+function thr(){ return parseInt($('thr').value,10)/1000; }
+function hang(){ return parseInt($('hang').value,10); }
+
+async function initMic(){
+  stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,
+      echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+  ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:SR});
+  src=ctx.createMediaStreamSource(stream);
+  node=ctx.createScriptProcessor(2048,1,1);
+  node.onaudioprocess=e=>{
+    const inp=e.inputBuffer.getChannelData(0);
+    let sum=0,peak=0;
+    for(let i=0;i<inp.length;i++){const a=Math.abs(inp[i]); if(a>peak)peak=a; sum+=inp[i]*inp[i];}
+    const rms=Math.sqrt(sum/inp.length);
+    $('level').style.width=Math.min(100,peak*180)+'%';
+    if(!listening) return;
+    onAudio(new Float32Array(inp), rms, (inp.length/ctx.sampleRate)*1000);
+  };
+  src.connect(node); node.connect(ctx.destination);
+  logEv('harness','mic ready at '+ctx.sampleRate+' Hz');
+}
+
+function onAudio(chunk, rms, ms){
+  // While the agent talks its own voice comes back through the mic. Browser AEC
+  // only partly removes it, so during playback the bar to count as speech is
+  // raised well above the echo - otherwise it answers itself forever.
+  const gate = agentSpeaking() ? thr()*BARGE_MULT : thr();
+  const voiced = rms > gate;
+
+  if(voiced && agentSpeaking() && performance.now() > bargeUntil){
+    bargeUntil = performance.now()+900;
+    stopPlayback('you spoke over it');
+    fetch('/barge',{method:'POST'});
+  }
+
+  if(voiced){
+    if(!capturing){ capturing=true; buf=[]; setState('hearing you'); }
+    quietMs=0; speechFrames++;
+    buf.push(chunk);
+  } else if(capturing){
+    quietMs+=ms;
+    buf.push(chunk);                       // keep trailing silence, it helps the model
+    if(quietMs>=hang()){
+      capturing=false;
+      if(speechFrames>3) send();
+      speechFrames=0; buf=[];
+    }
+  }
+}
+
+function encodeWav(f32){
+  const n=f32.length, ab=new ArrayBuffer(44+n*2), v=new DataView(ab);
+  const s=(o,str)=>{for(let i=0;i<str.length;i++)v.setUint8(o+i,str.charCodeAt(i));};
+  s(0,'RIFF'); v.setUint32(4,36+n*2,true); s(8,'WAVE'); s(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,SR,true); v.setUint32(28,SR*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  s(36,'data'); v.setUint32(40,n*2,true);
+  let o=44;
+  for(let i=0;i<n;i++){const x=Math.max(-1,Math.min(1,f32[i])); v.setInt16(o,x<0?x*0x8000:x*0x7FFF,true); o+=2;}
+  return ab;
+}
+
+function send(){
+  let total=0; buf.forEach(c=>total+=c.length);
+  if(total < SR*0.25) return;
+  const flat=new Float32Array(total); let o=0;
+  buf.forEach(c=>{flat.set(c,o); o+=c.length;});
+  const secs=(total/SR).toFixed(2);
+  youLine = addMsg('you','['+secs+'s]');   // replaced by the transcript
+  logEv('harness','sent '+secs+'s');
+  setState('thinking');
+  $('s-tok').textContent='—'; $('s-aud').textContent='—';
+  fetch('/turn',{method:'POST',body:encodeWav(flat)}).catch(e=>logEv('error',e.message));
+}
+
+function setState(s){
+  $('b-state').textContent=s;
+  $('b-state').className='badge'+(s==='hearing you'?' hot':(s==='idle'?'':' on'));
+  $('status').textContent=s;
+}
+
+// ---------------------------------------------------------------- events
+let curLine=null;
+const es=new EventSource('/events');
+es.onopen=()=>{ $('b-conn').textContent='connected'; $('b-conn').className='badge on'; };
+es.onerror=()=>{ $('b-conn').textContent='disconnected'; $('b-conn').className='badge hot'; };
+es.onmessage=e=>{
+  let ev; try{ev=JSON.parse(e.data);}catch{return;}
+  const k=ev.kind;
+  if(k==='audio'){ playPCM(ev.pcm, ev.rate); return; }
+  if(k==='delta'){
+    if(!curLine) curLine=addMsg('agent','');
+    curLine.textContent+=ev.text;
+    return;
+  }
+  if(k==='turn_start'){ curLine=null; resetPlayback(); logEv(k,''); return; }
+  if(k==='heard'){
+    if(youLine){ youLine.textContent=ev.text; youLine=null; } else addMsg('you',ev.text);
+    logEv(k, ev.ms+' ms'); return;
+  }
+  if(k==='saw'){ $('camwhat').textContent=ev.text; logEv('saw', ev.text+'  ('+ev.ms+' ms)'); return; }
+  if(k==='situation'){ logEv('situation', ev.text); return; }
+  if(k==='first_token'){ $('s-tok').textContent=ev.ms; logEv(k,ev.ms+' ms'); return; }
+  if(k==='first_audio'){ $('s-aud').textContent=ev.ms; logEv(k,ev.ms+' ms'); return; }
+  if(k==='turn_end'){
+    flushPre();                       // release a reply shorter than PREROLL
+    fadeOutTail();                    // roll the tail off instead of stopping dead
+    $('s-turn').textContent=ev.ms;
+    $('b-turns').textContent='turns '+(++turns);
+    logEv(k,ev.ms+' ms');
+    setTimeout(()=>{ if(!agentSpeaking()) setState(listening?'listening':'idle'); }, 300);
+    return;
+  }
+  if(k==='reply'){ logEv(k, ev.text); return; }
+  if(k==='error'){ logEv(k, ev.message); setState('error'); return; }
+  logEv(k, ev.message||'');
+};
+let turns=0;
+
+// ---------------------------------------------------------------- wiring
+$('talk').onclick=async ()=>{
+  if(!ctx){ try{ await initMic(); }catch(e){ logEv('error','mic: '+e.message); return; } }
+  if(ctx.state==='suspended') await ctx.resume();
+  if(!outCtx){ outCtx=new (window.AudioContext||window.webkitAudioContext)(); }
+  if(outCtx.state==='suspended') await outCtx.resume();
+  listening=!listening;
+  $('talk').textContent = listening ? 'Listening — just talk (click to stop)' : 'Click to start listening';
+  $('talk').classList.toggle('live', listening);
+  setState(listening?'listening':'idle');
+};
+$('reset').onclick=()=>{
+  fetch('/reset',{method:'POST'}).then(r=>r.json()).then(j=>{
+    $('chat').innerHTML=''; curLine=null; youLine=null;
+    turns=0; $('b-turns').textContent='turns 0';
+    $('camwhat').textContent='';
+    logEv('harness','context cleared');
+    if(j.situation) logEv('situation', j.situation);
+  });
+};
+$('clear').onclick=()=>{ $('log').innerHTML=''; };
+$('thr').oninput=()=>{ $('thr-val').textContent=thr().toFixed(3); $('gate').style.left=Math.min(100,thr()*180*100)+'%'; };
+
+// Buffer size lives on the server (it goes to csm.rs per request); the head
+// start is purely client side, so it applies to the very next chunk.
+$('cam').onclick=toggleCam;
+$('sens').oninput=()=>{ $('sens-val').textContent=$('sens').value; };
+$('buf').oninput=()=>{
+  const n=parseInt($('buf').value,10);
+  $('buf-val').textContent=n; $('buf-ms').textContent=Math.round(n*80);
+};
+$('buf').onchange=()=>{
+  const n=parseInt($('buf').value,10);
+  fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},
+                   body:JSON.stringify({buffer_size:n})})
+    .then(()=>logEv('harness','voice buffer '+n+' frames'));
+};
+$('pre').oninput=()=>{
+  PREROLL=parseInt($('pre').value,10)/1000;
+  $('pre-val').textContent=$('pre').value;
+};
+$('hang').oninput=()=>{ $('hang-val').textContent=$('hang').value; };
+$('thr').oninput();
+</script>
+</body>
+</html>
