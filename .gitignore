@@ -1,0 +1,24 @@
+# models and weights - never commit, they have their own licenses
+models/
+*.safetensors
+*.gguf
+*.bin
+
+# voices are personal data: your reference clips stay yours
+voices_custom/
+voice_prompts/
+*.wav
+*.mp3
+*.m4a
+
+# local config with your own coordinates, ports, paths
+config.local.env
+.env
+
+# runtime
+work/
+*.log
+__pycache__/
+*.pyc
+.venv/
+venv/
